@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html>
+    <body onload="start()">
+        <canvas id="webgl" width="640" height="480">
+            No Soporta Canvas
+        </canvas>
+        <script src="m4.js" type="text/javascript"></script>
+        <script src="webgl-obj-loader.js" type="text/javascript"></script>
+        <script>
+            var requestAnimationFrame = window.requestAnimationFrame || window.mozRequestAnimationFrame ||
+                              window.webkitRequestAnimationFrame || window.msRequestAnimationFrame;
+            window.requestAnimationFrame = requestAnimationFrame;
+
+            var gl;
+            var canvas;
+            var program;
+
+            var in_position;
+            var in_color;
+
+            var loc_u_proj;
+            var loc_u_view;
+            var loc_u_model;
+
+            var vao;
+            var vaoSphere;
+            var vaoDoggo;
+            var vaoSword;
+            var vaoStickMan;
+
+            var indicesSphereLength;
+            var inidcesDoggoLegth;
+            var indicesSwordLeght;
+            var indicesStickManLeght;
+
+            var m_proj;
+            var m_view;
+            var m_model;
+
+            var camera_position = [0 , 0 , 5];
+            var pitch = 0;
+            var yaw = 0;
+            var keycodes = []; // new Array
+
+            var sherePosition = [0,0,-5];
+
+            var VERTEX_SOURCE = `#version 300 es 
+                in vec3 in_position;
+                in vec3 in_color;
+                out vec3 o_color;
+
+                uniform mat4 u_proj;
+                uniform mat4 u_view;
+                uniform mat4 u_model;
+
+                void main() {
+                   gl_Position = u_proj * u_view * u_model * vec4(in_position.xyz , 1);
+                   o_color = in_color; 
+                }
+            `;
+
+            var FRAGMENT_SOURCE = `#version 300 es
+                precision highp float;
+                in vec3 o_color;
+                out vec4 color;
+
+                void main() {
+                    color = vec4(o_color.xyz , 1);
+                }
+            `;
+            function getRayFromMouse(mouse_x, mouse_y){
+                var x = (2.0 * mouse_x) / canvas.width - 1;
+                var y = 1.0 * (2.0 * mouse_y) / canvas.height;
+                var z = 1.0;
+
+                var ray_nds = [x,y,z];
+                var ray_clip = [x,y, -1.0,1.0];
+                var proj_inv = m4.multiply(m4.identity(), m_proj);
+                proj_inv = m4.inverse(proj_inv);
+
+                var ray_eye = m4.vectorMultiply(ray_clip, proj_inv);
+                ray_eye[2] = -1.0;
+                ray_eye[3] = 0.0;
+
+                var view_inv = m4.multiply(m4.identity(), m_view);
+                view_inv = m4.inverse(view_inv);
+                
+                var ray_world = m4.vectorMultiply(ray_eye, view_inv);
+                ray_world = normalize(ray_world);
+
+                var rayWorld_v3 = [ray_world[0], ray_world[1], ray_world[2]];
+
+                return rayWorld_v3;
+            
+            }
+
+            function intersectRaySphere(origin, ray, center, radius){
+                var e = subtractVectors(center, origin);
+                var a = dot(ray, e);
+
+
+                var f1 = (radius * radius)-dot(e,e)+ (a* a);
+
+                if(f1 < 0 ){
+                    return 0;
+                }
+
+                var f = Math.sqrt(f1);
+                var t = a - f;
+                return t;
+            }
+
+            function start() {
+                canvas = document.getElementById("webgl");
+                initWebgl();
+
+                var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+                if (!vertexShader) {
+                    console.log("Error el crear vertex shader");
+                    return;
+                }
+                gl.shaderSource(vertexShader , VERTEX_SOURCE);
+                gl.compileShader(vertexShader);
+
+                var compiled = gl.getShaderParameter(vertexShader , gl.COMPILE_STATUS);
+                var error = "";
+                if (!compiled) {
+                    error = gl.getShaderInfoLog(vertexShader);
+                    console.log("Error compilación Vertex Shader " + error);
+                    return;
+                }
+
+                var fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+                if (!fragmentShader) {
+                    console.log("Error al crear fragment shader");
+                    return;
+                }
+                gl.shaderSource(fragmentShader , FRAGMENT_SOURCE);
+                gl.compileShader(fragmentShader);
+
+                compiled = gl.getShaderParameter(fragmentShader , gl.COMPILE_STATUS);
+                if (!compiled) {
+                    error = gl.getShaderInfoLog(fragmentShader);
+                    console.log("Error compilación Fragment Shader "  + error);
+                    return;
+                }
+
+                program = gl.createProgram();
+                if (!program) {
+                    return;
+                }
+
+                gl.attachShader(program , vertexShader);
+                gl.attachShader(program , fragmentShader);
+                gl.linkProgram(program);
+
+                var linked = gl.getProgramParameter(program , gl.LINK_STATUS);
+                if (!linked) {
+                    error = gl.getProgramInfoLog(program);
+                    console.log("Error enlace " + error);
+                    return;
+                }
+
+                gl.deleteShader(vertexShader);
+                gl.deleteShader(fragmentShader);
+
+                gl.useProgram(program);
+
+                in_position = gl.getAttribLocation(program , 'in_position');
+                if (in_position < 0) {
+                    console.log("Error al obtener ubicacion in_position");
+                    return;
+                }
+
+                in_color = gl.getAttribLocation(program , 'in_color');
+                if (in_color < 0) {
+                    console.log("Error al obtener ubicacion in_color");
+                    return;
+                }
+
+                loc_u_proj = gl.getUniformLocation(program , "u_proj");
+                loc_u_view = gl.getUniformLocation(program , "u_view");
+                loc_u_model = gl.getUniformLocation(program , "u_model");
+
+                vao = gl.createVertexArray();
+                gl.bindVertexArray(vao);
+
+                var vertices = new Float32Array(
+                    [  -1.0 , -1.0 , 1.0,
+                        1.0 , -1.0 , 1.0,
+                        1.0 ,  1.0 , 1.0
+                    ]
+                );
+
+                var vboPositions = gl.createBuffer();
+                if (!vboPositions) {
+                    console.log("Error crear vboPositions");
+                    return;
+                }
+
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboPositions);
+                gl.bufferData(gl.ARRAY_BUFFER , vertices , gl.STATIC_DRAW);
+
+                gl.vertexAttribPointer(in_position , 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_position);
+
+
+                var colors = new Float32Array(
+                    [1.0 , 0.0 , 0.0 ,
+                     0.0 , 1.0 , 0.0,
+                     0.0 , 0.0 , 1.0
+                    ]
+                );
+
+                var vboColors = gl.createBuffer();
+                if (!vboColors) {
+                    console.log("Error crear vboColors");
+                    return;
+                }
+
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboColors);
+                gl.bufferData(gl.ARRAY_BUFFER , colors , gl.STATIC_DRAW);
+
+                gl.vertexAttribPointer(in_color , 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_color);
+
+                // fieldOfViewInRadians, aspect, near, far
+                m_proj = m4.perspective(57 / 180 * Math.PI ,
+                    canvas.clientWidth / canvas.clientHeight , 0.1 , 100);
+
+                m_view = m4.identity();
+                m_view = m4.translate(m_view , 0 , 0 , 8);
+                m_view = m4.inverse(m_view);
+
+                m_model = m4.identity();
+
+                window.addEventListener("keydown" , onkeydown.bind(this));
+                window.addEventListener("keyup" , onkeyup.bind(this));
+
+
+                OBJ.downloadMeshes({"sphere" : "sphere.obj", "doggo" : "doggo.obj", "sword": "sword.obj", "stickman": "stickman.OBJ"} , 
+                        onEndDownloadObj.bind(this));
+
+                canvas.addEventListener("mousedown", onClickScene.bind(this));
+
+
+                draw();
+            }
+            function onClickScene(e){
+                var x = new Number();
+                var y = new Number();
+
+                if(e.x != undefined && e.y != undefined){
+                    x = e.x;
+                    y = e.y;
+                } else {
+                    x = e.clientX + document.body.scrollLeft + document.body.scrollLeft;
+                    y = e.clientY + document.body.scrollTop + document.body.scrollTop;
+                }
+
+
+                x -= canvas.offsetLeft;
+                y -= canvas.offsetTop;
+
+                var ray = getRayFromMouse(x,y);
+                var origin = camera_position;
+                var center = sherePosition;
+
+                var t = intersectRaySphere(origin, ray, center, 1.0);
+                console.log("t" + t);
+            }
+            function onEndDownloadObj(meshes) {
+              
+
+                vaoSphere = gl.createVertexArray();
+                gl.bindVertexArray(vaoSphere);
+
+                var vboPositions = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboPositions);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(meshes.sphere.vertices) , gl.STATIC_DRAW);
+                
+                gl.vertexAttribPointer(in_position, 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_position);
+                
+                var eboIndices = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER , eboIndices);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER , 
+                        new Uint16Array(meshes.sphere.indices) , gl.STATIC_DRAW);
+
+                var colors = new Array();
+                var len = meshes.sphere.indices.length * 3;
+                for (var k = 0; k < len; k += 3) {
+                    colors[k] = Math.random();
+                    colors[k + 1] = Math.random();
+                    colors[k + 2] = Math.random();
+                }
+
+                var vboColors = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboColors);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(colors) , gl.STATIC_DRAW);
+                gl.vertexAttribPointer(in_color , 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_color);
+
+                indicesSphereLength = meshes.sphere.indices.length;
+
+
+                //DOGGO
+              
+
+                vaoDoggo = gl.createVertexArray();
+                gl.bindVertexArray(vaoDoggo);
+
+                var vboPositions1 = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboPositions1);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(meshes.doggo.vertices) , gl.STATIC_DRAW);
+                
+                gl.vertexAttribPointer(in_position, 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_position);
+                
+                var eboIndices1 = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER , eboIndices1);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER , 
+                        new Uint16Array(meshes.doggo.indices) , gl.STATIC_DRAW);
+
+                var colors1 = new Array();
+                var len = meshes.doggo.indices.length * 3;
+                for (var k = 0; k < len; k += 3) {
+                    colors1[k] = 150;
+                    colors1[k + 1] = 75;
+                    colors1[k + 2] = 0;
+                }
+
+                var vboColors1 = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboColors1);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(colors1) , gl.STATIC_DRAW);
+                gl.vertexAttribPointer(in_color , 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_color);
+
+                
+                inidcesDoggoLegth = meshes.doggo.indices.length;
+
+                //Stickman
+               
+                vaoStickMan = gl.createVertexArray();
+                gl.bindVertexArray(vaoStickMan);
+
+                var vboPositions2 = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboPositions2);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(meshes.stickman.vertices) , gl.STATIC_DRAW);
+                
+                gl.vertexAttribPointer(in_position, 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_position);
+                
+                var eboIndices2 = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER , eboIndices2);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER , 
+                        new Uint16Array(meshes.stickman.indices) , gl.STATIC_DRAW);
+
+                var colors2 = new Array();
+                var len = meshes.stickman.indices.length * 3;
+                for (var k = 0; k < len; k += 3) {
+                    colors2[k] = 255;
+                    colors2[k + 1] = 255;
+                    colors2[k + 2] = 255;
+                }
+
+                var vboColors2 = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboColors2);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(colors2) , gl.STATIC_DRAW);
+                gl.vertexAttribPointer(in_color , 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_color);
+
+                indicesStickManLeght = meshes.stickman.indices.length;
+                
+
+                //SWORD
+
+                vaoSword = gl.createVertexArray();
+                gl.bindVertexArray(vaoSword);
+
+                var vboPositions3 = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboPositions3);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(meshes.sword.vertices) , gl.STATIC_DRAW);
+                
+                gl.vertexAttribPointer(in_position, 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_position);
+                
+                var eboIndices3 = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER , eboIndices3);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER , 
+                        new Uint16Array(meshes.sword.indices) , gl.STATIC_DRAW);
+
+                var colors3 = new Array();
+                var len = meshes.sword.indices.length * 3;
+                for (var k = 0; k < len; k += 3) {
+                    colors3[k] = 3;
+                    colors3[k + 1] = 0;
+                    colors3[k + 2] = 0;
+                }
+
+                var vboColors3 = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER , vboColors3);
+                gl.bufferData(gl.ARRAY_BUFFER , 
+                        new Float32Array(colors3) , gl.STATIC_DRAW);
+                gl.vertexAttribPointer(in_color , 3 , gl.FLOAT , false , 0 , 0);
+                gl.enableVertexAttribArray(in_color);
+
+                
+                indicesSwordLeght = meshes.sword.indices.length;
+
+            }
+
+            function onkeydown(e) {
+                keycodes[e.keyCode] = true;
+            }
+
+            function onkeyup(e) {
+                if (keycodes[e.keyCode]) {
+                    delete keycodes[e.keyCode];
+                }
+            }
+
+
+
+            var angle = 0;
+
+            function draw() {
+                gl.clearColor(0 , 0, 0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.enable(gl.DEPTH_TEST);
+
+                gl.bindVertexArray(vao);
+
+                m_model = m4.identity();
+               //  angle += 0.1;
+                m_model = m4.yRotation(angle);
+
+                var cvx = 0;
+                var cvz = 0;
+
+                if (keycodes[68]) { // D
+                    cvx = 0.05;   
+                }
+
+                if (keycodes[65]) { // A
+                    cvx = -0.05;
+                }
+
+                if (keycodes[87]) { // w
+                    cvz = -0.05;
+                }
+
+                if (keycodes[83]) { // s
+                    cvz = 0.05;
+                }
+
+                if (keycodes[38]) {
+                    pitch += 0.01;
+                }
+
+                if (keycodes[40]) {
+                    pitch -= 0.01;
+                }
+
+                if (keycodes[37]) {
+                    yaw += 0.01;
+                }
+
+                if (keycodes[39]) {
+                    yaw -= 0.01;
+                }
+
+                m_view = m4.identity();
+                m_view = m4.translate(m_view , 
+                        camera_position[0] , camera_position[1] , camera_position[2]);
+                m_view = m4.yRotate(m_view , yaw);
+                m_view = m4.xRotate(m_view , pitch);
+                
+
+                // Direccion Right
+                var right = m4.vectorMultiply([1 , 0 , 0 , 0] , m_view);
+                right[0] *= cvx;
+                right[1] *= cvx;
+                right[2] *= cvx;
+                
+                camera_position[0] += right[0];
+                camera_position[1] += right[1];
+                camera_position[2] += right[2];
+
+                // Direccion Forward
+                var forward = m4.vectorMultiply([0 , 0 , 1 , 0] , m_view);
+                forward[0] *= cvz;
+                forward[1] *= cvz;
+                forward[2] *= cvz;
+
+                camera_position[0] += forward[0];
+                camera_position[1] += forward[1];
+                camera_position[2] += forward[2];
+
+                m_view = m4.inverse(m_view);
+
+                gl.uniformMatrix4fv(loc_u_proj , false , m_proj);
+                gl.uniformMatrix4fv(loc_u_view , false , m_view);
+                gl.uniformMatrix4fv(loc_u_model , false , m_model);
+
+                gl.drawArrays(gl.TRIANGLES , 0 , 3);
+
+                // Modelo Sphere
+                if (vaoSphere) {
+
+                    gl.bindVertexArray(vaoSphere);
+                    m_model = m4.translation(0 , 0 , -5);
+                    gl.uniformMatrix4fv(loc_u_model , false , m_model);
+
+                    gl.drawElements(gl.TRIANGLES , indicesSphereLength
+                             , gl.UNSIGNED_SHORT , 0);
+
+                }
+
+                // Modelo Sphere
+                if (vaoDoggo) {
+
+                    gl.bindVertexArray(vaoDoggo);
+                    m_model = m4.translation(-3 , 0 , -5);
+                    
+                    m_model = m4.multiply(m_model, m4.scaling(0.05,0.05,0.05));
+                    m_model = m4.multiply(m_model, m4.xRotation(55));
+                 
+                    
+                    gl.uniformMatrix4fv(loc_u_model , false , m_model);
+
+                    gl.drawElements(gl.TRIANGLES , inidcesDoggoLegth
+                             , gl.UNSIGNED_SHORT , 0);
+
+                }
+
+                
+
+                //Modelo Sword
+
+                if (vaoStickMan) {
+
+                    gl.bindVertexArray(vaoStickMan);
+                    m_model = m4.translation(-10 , 0 , -5);                
+                    m_model = m4.multiply(m_model, m4.scaling(0.05,0.05,0.05));
+                   
+                    gl.uniformMatrix4fv(loc_u_model , false , m_model);
+
+                    gl.drawElements(gl.TRIANGLES , indicesStickManLeght
+                             , gl.UNSIGNED_SHORT , 0);
+
+                }
+
+                 if (vaoSword) {
+
+                    gl.bindVertexArray(vaoSword);
+                    m_model = m4.translation(-6 , 0 , -5);
+                    
+                    m_model = m4.multiply(m_model, m4.scaling(0.05,0.05,0.05));
+                    m_model = m4.multiply(m_model, m4.xRotation(190));
+                    gl.uniformMatrix4fv(loc_u_model , false , m_model);
+
+                    gl.drawElements(gl.TRIANGLES , indicesSwordLeght
+                             , gl.UNSIGNED_SHORT , 0);
+
+                }
+
+                requestAnimationFrame(draw);
+
+            }
+
+            function initWebgl() {
+
+                gl = canvas.getContext("webgl2");
+
+                if (!gl) {
+                    alert("No se puede iniciar WebGL 2");
+                }
+
+                console.log(gl.getParameter(gl.VERSION));
+                console.log(gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
+            }
+
+        </script>
+    </body>
+    
+</html>
